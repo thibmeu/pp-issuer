@@ -9,6 +9,7 @@ export interface Bindings {
 	SENTRY_ACCESS_CLIENT_SECRET: string;
 	SENTRY_DSN: string;
 	SENTRY_SAMPLE_RATE: string;
+	SUPPORTED_TOKEN_TYPES: string;
 
 	// R2 buckets
 	ISSUANCE_KEYS: R2Bucket;

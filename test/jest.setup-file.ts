@@ -31,7 +31,6 @@ async function mockSign(
 		}
 	}
 
-	console.log('somehow mock', algorithm);
 	// webcrypto calls crypto, which is mocked. We need to restore the original implementation.
 	crypto.subtle.sign = parentSign;
 	const res = crypto.subtle.sign(algorithm, key, data);

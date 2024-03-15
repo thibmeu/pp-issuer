@@ -2,20 +2,20 @@ import { Bindings } from './bindings';
 import { Context } from './context';
 import { Router } from './router';
 import { HeaderNotDefinedError } from './errors';
-import { IssuerConfigurationResponse, TokenType } from './types';
+import { IssuerConfigurationResponse } from './types';
 import { b64ToB64URL, b64Tou8, b64URLtoB64, u8ToB64 } from './utils/base64';
-import {
-	MediaType,
-	PRIVATE_TOKEN_ISSUER_DIRECTORY,
-	TOKEN_TYPES,
-	publicVerif,
-	util,
-} from '@cloudflare/privacypass-ts';
+import { MediaType, PRIVATE_TOKEN_ISSUER_DIRECTORY, TOKEN_TYPES } from '@cloudflare/privacypass-ts';
 import { ConsoleLogger } from './context/logging';
 import { MetricsRegistry } from './context/metrics';
 import { hexEncode } from './utils/hex';
 import { DIRECTORY_CACHE_REQUEST, clearDirectoryCache, getDirectoryCache } from './cache';
-const { BlindRSAMode, Issuer, TokenRequest } = publicVerif;
+import {
+	getBucketKey,
+	getIssuer,
+	getTokenKeys,
+	parseTokenRequestHeader,
+	supportedTokenTypes,
+} from './keys';
 
 const keyToTokenKeyID = async (key: Uint8Array): Promise<number> => {
 	const hash = await crypto.subtle.digest('SHA-256', key);
@@ -27,6 +27,7 @@ interface StorageMetadata extends Record<string, string> {
 	version: string;
 	publicKey: string;
 	tokenKeyID: string;
+	tokenType: string;
 }
 
 export const handleTokenRequest = async (ctx: Context, request: Request) => {
@@ -36,52 +37,32 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 		throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
 	}
 
-	const buffer = await request.arrayBuffer();
-	const tokenRequest = TokenRequest.deserialize(new Uint8Array(buffer));
+	const buffer = new Uint8Array(await request.arrayBuffer());
+	const { tokenType, truncatedTokenKeyId } = parseTokenRequestHeader(ctx, buffer);
 
-	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
-		throw new Error('Invalid token type');
-	}
-
-	const key = await ctx.cache.ISSUANCE_KEYS.get(tokenRequest.truncatedTokenKeyId.toString());
-
+	const key = await ctx.cache.ISSUANCE_KEYS.get(getBucketKey(tokenType, truncatedTokenKeyId));
 	if (key === null) {
 		throw new Error('Issuer not initialised');
 	}
 
-	const privateKey = key.data;
-	if (privateKey === undefined) {
-		throw new Error('Issuer not initialised');
-	}
-	const sk = await crypto.subtle.importKey(
-		'pkcs8',
-		privateKey,
-		{
-			name: ctx.isTest() ? 'RSA-PSS' : 'RSA-RAW',
-			hash: 'SHA-384',
-			length: 2048,
-		},
-		true,
-		['sign']
-	);
+	const issuerBuilder = getIssuer(tokenType);
+
+	const rawSk = await key.data!;
 	const pkEnc = key?.customMetadata?.publicKey;
 	if (!pkEnc) {
 		throw new Error('Issuer not initialised');
 	}
-	const pk = await crypto.subtle.importKey(
-		'spki',
-		util.convertRSASSAPSSToEnc(b64Tou8(b64URLtoB64(pkEnc))),
-		{ name: 'RSA-PSS', hash: 'SHA-384' },
-		true,
-		['verify']
-	);
 
+	const rawPk = b64Tou8(b64URLtoB64(pkEnc));
 	const domain = new URL(request.url).host;
-	const issuer = new Issuer(BlindRSAMode.PSS, domain, sk, pk, { supportsRSARAW: true });
-	const signedToken = await issuer.issue(tokenRequest);
-	ctx.metrics.signedTokenTotal.inc({ env: ctx.env.ENVIRONMENT });
+	const issue = await issuerBuilder(domain, rawSk, rawPk);
+	const signedToken = await issue(buffer);
+	ctx.metrics.signedTokenTotal.inc({
+		env: ctx.env.ENVIRONMENT,
+		tokenType: tokenType.value.toString(),
+	});
 
-	return new Response(signedToken.serialize(), {
+	return new Response(signedToken, {
 		headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
 	});
 };
@@ -118,7 +99,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 	const directory: IssuerConfigurationResponse = {
 		'issuer-request-uri': '/token-request',
 		'token-keys': keys.objects.map(key => ({
-			'token-type': TokenType.BlindRSA,
+			'token-type': Number.parseInt(key.key.split('-')[0]),
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': new Date(key.uploaded).getTime(),
 		})),
@@ -145,77 +126,82 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 };
 
 export const handleRotateKey = async (ctx: Context, _request?: Request) => {
-	ctx.metrics.keyRotationTotal.inc({ env: ctx.env.ENVIRONMENT });
+	const publicKeys: string[] = [];
+	for (const tokenType of supportedTokenTypes(ctx)) {
+		ctx.metrics.keyRotationTotal.inc({
+			env: ctx.env.ENVIRONMENT,
+			tokenType: tokenType.value.toString(),
+		});
 
-	// Generate a new type 2 Issuer key
+	const generate = getTokenKeys(tokenType).generate;
 	let publicKeyEnc: string;
 	let tokenKeyID: number;
-	let privateKey: ArrayBuffer;
+	let privateKey: Uint8Array;
 	do {
-		const keypair = (await crypto.subtle.generateKey(
-			{
-				name: 'RSA-PSS',
-				modulusLength: 2048,
-				publicExponent: new Uint8Array([1, 0, 1]),
-				hash: { name: 'SHA-384' },
-			},
-			true,
-			['sign', 'verify']
-		)) as CryptoKeyPair;
-		const publicKey = new Uint8Array(
-			(await crypto.subtle.exportKey('spki', keypair.publicKey)) as ArrayBuffer
-		);
-		const rsaSsaPssPublicKey = util.convertEncToRSASSAPSS(publicKey);
-		publicKeyEnc = b64ToB64URL(u8ToB64(rsaSsaPssPublicKey));
-		tokenKeyID = await keyToTokenKeyID(rsaSsaPssPublicKey);
-		privateKey = (await crypto.subtle.exportKey('pkcs8', keypair.privateKey)) as ArrayBuffer;
+		const keypair = await generate();
+		const publicKey = keypair.publicKey;
+		publicKeyEnc = b64ToB64URL(u8ToB64(publicKey));
+		tokenKeyID = await keyToTokenKeyID(publicKey);
+		privateKey = keypair.privateKey;
 		// The bellow condition ensure there is no collision between truncated_token_key_id provided by the issuer
 		// This is a 1/256 with 2 keys, and 256/256 chances with 256 keys. This means an issuer cannot have more than 256 keys at the same time.
 		// Otherwise, this loop is going to be infinite. With 255 keys, this iteration might take a while.
-	} while ((await ctx.cache.ISSUANCE_KEYS.head(tokenKeyID.toString())) !== null);
+	} while ((await ctx.cache.ISSUANCE_KEYS.head(getBucketKey(tokenType, tokenKeyID))) !== null);
 
-	// check if it's the initialisation phase
-	const latest = await ctx.env.ISSUANCE_KEYS.head('latest');
-	const version = latest?.customMetadata?.version ?? '0';
-	const next = Number.parseInt(version) + 1;
+		// check if it's the initialisation phase
+		const latest = await ctx.env.ISSUANCE_KEYS.head('latest');
+		const version = latest?.customMetadata?.version ?? '0';
+		const next = Number.parseInt(version) + 1;
 
-	const metadata: StorageMetadata = {
-		version: next.toString(),
-		publicKey: publicKeyEnc,
-		tokenKeyID: tokenKeyID.toString(),
-	};
+		const metadata: StorageMetadata = {
+			version: next.toString(),
+			publicKey: publicKeyEnc,
+			tokenKeyID: tokenKeyID.toString(),
+			tokenType: tokenType.value.toString(),
+		};
 
-	await ctx.env.ISSUANCE_KEYS.put(tokenKeyID.toString(), privateKey, {
-		customMetadata: metadata,
-	});
+		publicKeys.push(publicKeyEnc);
+
+		await ctx.env.ISSUANCE_KEYS.put(getBucketKey(tokenType, tokenKeyID), privateKey, {
+			customMetadata: metadata,
+		});
+	}
 
 	ctx.waitUntil(clearDirectoryCache());
 
-	return new Response(`New key ${publicKeyEnc}`, { status: 201 });
+	return new Response(publicKeys.join('\n'), { status: 201 });
 };
 
 const handleClearKey = async (ctx: Context, _request?: Request) => {
-	ctx.metrics.keyClearTotal.inc({ env: ctx.env.ENVIRONMENT });
-	const keys = await ctx.env.ISSUANCE_KEYS.list();
+	const deletedKeys: string[] = [];
+	for (const tokenType of supportedTokenTypes(ctx)) {
+		ctx.metrics.keyClearTotal.inc({
+			env: ctx.env.ENVIRONMENT,
+			tokenType: tokenType.value.toString(),
+		});
 
-	let latestKey: R2Object = keys.objects[0];
-	const toDelete: Set<string> = new Set();
+		const keys = await ctx.env.ISSUANCE_KEYS.list({ prefix: `${tokenType.value.toString()}-` });
 
-	// only keep the latest key
-	for (const key of keys.objects) {
-		if (latestKey.uploaded < key.uploaded) {
-			toDelete.add(latestKey.key);
-			latestKey = key;
-		} else if (key.uploaded !== latestKey.uploaded) {
-			toDelete.add(key.key);
+		let latestKey: R2Object = keys.objects[0];
+		const toDelete: Set<string> = new Set();
+
+		// only keep the latest key
+		for (const key of keys.objects) {
+			if (latestKey.uploaded < key.uploaded) {
+				toDelete.add(latestKey.key);
+				latestKey = key;
+			} else if (key.uploaded !== latestKey.uploaded) {
+				toDelete.add(key.key);
+			}
 		}
+		const toDeleteArray = [...toDelete];
+		await ctx.env.ISSUANCE_KEYS.delete(toDeleteArray);
+		deletedKeys.push(...toDeleteArray);
 	}
-	const toDeleteArray = [...toDelete];
-	await ctx.env.ISSUANCE_KEYS.delete(toDeleteArray);
 
 	ctx.waitUntil(clearDirectoryCache());
 
-	return new Response(`Keys cleared: ${toDeleteArray.join('\n')}`, { status: 201 });
+	return new Response(deletedKeys.join('\n'), { status: 201 });
 };
 
 export default {

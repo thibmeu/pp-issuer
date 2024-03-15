@@ -9,10 +9,12 @@ import { RSABSSA } from '@cloudflare/blindrsa-ts';
 import {
 	MediaType,
 	PRIVATE_TOKEN_ISSUER_DIRECTORY,
+	TOKEN_TYPES,
 	publicVerif,
 	util,
 } from '@cloudflare/privacypass-ts';
 import { getDirectoryCache } from '../src/cache';
+import { getBucketKey } from '../src/keys';
 const { TokenRequest } = publicVerif;
 
 const sampleURL = 'http://localhost';
@@ -36,9 +38,9 @@ describe('challenge handlers', () => {
 			(await crypto.subtle.exportKey('spki', keypair.publicKey)) as ArrayBuffer
 		);
 		const publicKeyEnc = b64ToB64URL(u8ToB64(util.convertEncToRSASSAPSS(publicKey)));
-		const tokenKey = await keyToTokenKeyID(new TextEncoder().encode(publicKeyEnc));
+		const tokenKeyID = await keyToTokenKeyID(new TextEncoder().encode(publicKeyEnc));
 		await ctx.env.ISSUANCE_KEYS.put(
-			tokenKey.toString(),
+			getBucketKey(TOKEN_TYPES.BLIND_RSA, tokenKeyID),
 			(await crypto.subtle.exportKey('pkcs8', keypair.privateKey)) as ArrayBuffer,
 			{ customMetadata: { publicKey: publicKeyEnc } }
 		);
