@@ -30,6 +30,7 @@ export async function buildCmd(opts) {
 		outfile: path.join(__dirname, '..', 'dist', 'worker.mjs'),
 		outExtension: { '.js': '.mjs' },
 		minify: false,
+		platform: 'node',
 		// handy variables for Sentry reporting
 		define: {
 			RELEASE: JSON.stringify(release),

@@ -4,18 +4,12 @@ import { Router } from './router';
 import { HeaderNotDefinedError } from './errors';
 import { IssuerConfigurationResponse } from './types';
 import { b64ToB64URL, b64Tou8, b64URLtoB64, u8ToB64 } from './utils/base64';
-import { MediaType, PRIVATE_TOKEN_ISSUER_DIRECTORY, TOKEN_TYPES } from '@cloudflare/privacypass-ts';
+import { MediaType, PRIVATE_TOKEN_ISSUER_DIRECTORY } from '@cloudflare/privacypass-ts';
 import { ConsoleLogger } from './context/logging';
 import { MetricsRegistry } from './context/metrics';
 import { hexEncode } from './utils/hex';
 import { DIRECTORY_CACHE_REQUEST, clearDirectoryCache, getDirectoryCache } from './cache';
-import {
-	getBucketKey,
-	getIssuer,
-	getTokenKeys,
-	parseTokenRequestHeader,
-	supportedTokenTypes,
-} from './keys';
+import { getBucketKey, getTokenKeys, parseTokenRequestHeader, supportedTokenTypes } from './keys';
 
 const keyToTokenKeyID = async (key: Uint8Array): Promise<number> => {
 	const hash = await crypto.subtle.digest('SHA-256', key);
@@ -45,7 +39,7 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 		throw new Error('Issuer not initialised');
 	}
 
-	const issuerBuilder = getIssuer(tokenType);
+	const issuerBuilder = getTokenKeys(tokenType).issuerBuilder;
 
 	const rawSk = await key.data!;
 	const pkEnc = key?.customMetadata?.publicKey;
