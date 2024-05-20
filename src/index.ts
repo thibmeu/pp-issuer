@@ -18,7 +18,6 @@ const keyToTokenKeyID = async (key: Uint8Array): Promise<number> => {
 };
 
 interface StorageMetadata extends Record<string, string> {
-	version: string;
 	publicKey: string;
 	tokenKeyID: string;
 	tokenType: string;
@@ -53,7 +52,7 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	const signedToken = await issue(buffer);
 	ctx.metrics.signedTokenTotal.inc({
 		env: ctx.env.ENVIRONMENT,
-		tokenType: tokenType.value.toString(),
+		tokenType: tokenType.value.toString(16),
 	});
 
 	return new Response(signedToken, {
@@ -124,7 +123,7 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 	for (const tokenType of supportedTokenTypes(ctx)) {
 		ctx.metrics.keyRotationTotal.inc({
 			env: ctx.env.ENVIRONMENT,
-			tokenType: tokenType.value.toString(),
+			tokenType: tokenType.value.toString(16),
 		});
 
 	const generate = getTokenKeys(tokenType).generate;
@@ -142,16 +141,10 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 		// Otherwise, this loop is going to be infinite. With 255 keys, this iteration might take a while.
 	} while ((await ctx.cache.ISSUANCE_KEYS.head(getBucketKey(tokenType, tokenKeyID))) !== null);
 
-		// check if it's the initialisation phase
-		const latest = await ctx.env.ISSUANCE_KEYS.head('latest');
-		const version = latest?.customMetadata?.version ?? '0';
-		const next = Number.parseInt(version) + 1;
-
 		const metadata: StorageMetadata = {
-			version: next.toString(),
 			publicKey: publicKeyEnc,
 			tokenKeyID: tokenKeyID.toString(),
-			tokenType: tokenType.value.toString(),
+			tokenType: tokenType.value.toString(16),
 		};
 
 		publicKeys.push(publicKeyEnc);
@@ -171,10 +164,10 @@ const handleClearKey = async (ctx: Context, _request?: Request) => {
 	for (const tokenType of supportedTokenTypes(ctx)) {
 		ctx.metrics.keyClearTotal.inc({
 			env: ctx.env.ENVIRONMENT,
-			tokenType: tokenType.value.toString(),
+			tokenType: tokenType.value.toString(16),
 		});
 
-		const keys = await ctx.env.ISSUANCE_KEYS.list({ prefix: `${tokenType.value.toString()}-` });
+		const keys = await ctx.env.ISSUANCE_KEYS.list({ prefix: `${tokenType.value.toString(16)}-` });
 
 		let latestKey: R2Object = keys.objects[0];
 		const toDelete: Set<string> = new Set();
