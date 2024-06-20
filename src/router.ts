@@ -100,6 +100,7 @@ export class Router {
 				accessClientId: env.SENTRY_ACCESS_CLIENT_ID,
 				accessClientSecret: env.SENTRY_ACCESS_CLIENT_SECRET,
 				release: RELEASE,
+				service: env.SERVICE,
 				sampleRate: sentrySampleRate,
 				coloName: request?.cf?.colo as string,
 			});
@@ -120,7 +121,7 @@ export class Router {
 		ectx: ExecutionContext
 	): Promise<Response> {
 		const ctx = this.buildContext(request, env, ectx);
-		ctx.metrics.requestsTotal.inc({ env: ctx.env.ENVIRONMENT });
+		ctx.metrics.requestsTotal.inc({ env: ctx.env.ENVIRONMENT, service: ctx.env.SERVICE });
 		const rawPath = new URL(request.url).pathname;
 		const path = this.normalisePath(rawPath);
 

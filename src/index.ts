@@ -30,7 +30,7 @@ interface StorageMetadata extends Record<string, string> {
 }
 
 export const handleTokenRequest = async (ctx: Context, request: Request) => {
-	ctx.metrics.issuanceRequestTotal.inc({ env: ctx.env.ENVIRONMENT });
+	ctx.metrics.issuanceRequestTotal.inc({ env: ctx.env.ENVIRONMENT, service: ctx.env.SERVICE });
 	const contentType = request.headers.get('content-type');
 	if (!contentType || contentType !== MediaType.PRIVATE_TOKEN_REQUEST) {
 		throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
@@ -79,10 +79,10 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	const domain = new URL(request.url).host;
 	const issuer = new Issuer(BlindRSAMode.PSS, domain, sk, pk, { supportsRSARAW: true });
 	const signedToken = await issuer.issue(tokenRequest);
-	ctx.metrics.signedTokenTotal.inc({ env: ctx.env.ENVIRONMENT });
+	ctx.metrics.signedTokenTotal.inc({ env: ctx.env.ENVIRONMENT, service: ctx.env.SERVICE });
 
 	const keyId = tokenRequest.truncatedTokenKeyId.toString();
-	ctx.metrics.keyRequestTotal.inc({ env: ctx.env.ENVIRONMENT, keyId });
+	ctx.metrics.keyRequestTotal.inc({ env: ctx.env.ENVIRONMENT, service: ctx.env.SERVICE, key_id: keyId });
 
 	return new Response(signedToken.serialize(), {
 		headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
@@ -110,7 +110,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 		}
 		return cachedResponse;
 	}
-	ctx.metrics.directoryCacheMissTotal.inc({ env: ctx.env.ENVIRONMENT });
+	ctx.metrics.directoryCacheMissTotal.inc({ env: ctx.env.ENVIRONMENT, service: ctx.env.SERVICE });
 
 	const keys = await ctx.cache.ISSUANCE_KEYS.list({ include: ['customMetadata'] });
 
@@ -148,7 +148,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 };
 
 export const handleRotateKey = async (ctx: Context, _request?: Request) => {
-	ctx.metrics.keyRotationTotal.inc({ env: ctx.env.ENVIRONMENT });
+	ctx.metrics.keyRotationTotal.inc({ env: ctx.env.ENVIRONMENT, service: ctx.env.SERVICE });
 
 	// Generate a new type 2 Issuer key
 	let publicKeyEnc: string;
@@ -198,7 +198,7 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 };
 
 const handleClearKey = async (ctx: Context, _request?: Request) => {
-	ctx.metrics.keyClearTotal.inc({ env: ctx.env.ENVIRONMENT });
+	ctx.metrics.keyClearTotal.inc({ env: ctx.env.ENVIRONMENT, service: ctx.env.SERVICE });
 	const keys = await ctx.env.ISSUANCE_KEYS.list();
 
 	let latestKey: R2Object = keys.objects[0];
