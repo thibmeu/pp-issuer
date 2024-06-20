@@ -84,7 +84,6 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	const keyId = tokenRequest.truncatedTokenKeyId.toString();
 	ctx.metrics.keyRequestTotal.inc({ env: ctx.env.ENVIRONMENT, keyId });
 
-
 	return new Response(signedToken.serialize(), {
 		headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
 	});

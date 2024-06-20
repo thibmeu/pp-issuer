@@ -66,7 +66,7 @@ export class MetricsRegistry {
 		this.keyRequestTotal = this.registry.create(
 			'counter',
 			'key_request_total',
-			'Total number of requests for each key',
+			'Total number of requests for each key'
 		);
 	}
 
