@@ -10,7 +10,7 @@ export const getDirectoryCache = async (): Promise<Cache> => {
 };
 
 export const DIRECTORY_CACHE_REQUEST = new Request(
-	`https://${FAKE_DOMAIN_CACHE}${PRIVATE_TOKEN_ISSUER_DIRECTORY}`
+	`https://${FAKE_DOMAIN_CACHE}${PRIVATE_TOKEN_ISSUER_DIRECTORY}?v=1`
 );
 
 export const clearDirectoryCache = async (): Promise<boolean> => {
