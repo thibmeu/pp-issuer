@@ -195,7 +195,22 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 	return new Response(`New key ${publicKeyEnc}`, { status: 201 });
 };
 
-const handleClearKey = async (ctx: Context, _request?: Request) => {
+const handleClearKey = async (ctx: Context, request?: Request) => {
+	// If request is defined, this is a manual trigger
+	if (request && !ctx.isTest()) {
+		const MANUAL_CLEAR_BODY =
+			'I understand a manual clear might disrupt the issuer and I want to clear the keys.';
+		const body = await request.text();
+		if (body !== MANUAL_CLEAR_BODY) {
+			return new Response(
+				`Invalid body. Please set it to \"${MANUAL_CLEAR_BODY}\" and retry the operation.`,
+				{ status: 400 }
+			);
+		}
+
+		// The user confirmed it's a forced operation, and we can proceed with clearance.
+	}
+
 	ctx.metrics.keyClearTotal.inc();
 	const keys = await ctx.env.ISSUANCE_KEYS.list();
 
